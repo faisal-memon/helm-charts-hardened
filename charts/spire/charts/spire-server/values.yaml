@@ -446,6 +446,10 @@ notifier:
     #   namespace: foo
     # clusterb: {}
 
+experimental:
+  cacheReloadInterval: 5s
+  eventsPurgeInterval: 10s
+
 controllerManager:
   ## @param controllerManager.enabled Flag to enable controller manager
   enabled: false
