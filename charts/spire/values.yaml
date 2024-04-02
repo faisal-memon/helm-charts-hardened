@@ -154,10 +154,10 @@ spire-agent:
   ## @param spire-agent.nameOverride Overrides the name of Spire agent pods
   nameOverride: agent
 
-  image:
-    registry: ""
-    repository: "spire-agent"
-    tag: "latest-local"
+    #image:
+    #registry: ""
+    #repository: "spire-agent"
+    #tag: "latest-local"
 
 ## @section Upstream Spire agent and CSI driver configuration
 ## Parameter values enabling upstream spire agent and CSI driver
