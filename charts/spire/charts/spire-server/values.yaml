@@ -446,12 +446,6 @@ notifier:
     #   namespace: foo
     # clusterb: {}
 
-experimental:
-  cacheReloadInterval: 5s
-  pruneEventsInterval: 10s
-  featureFlags:
-    - events_based_cache
-
 controllerManager:
   ## @param controllerManager.enabled Flag to enable controller manager
   enabled: false
@@ -915,6 +909,8 @@ experimental:
   enabled: false
   ## @param experimental.cacheReloadInterval The amount of time between two reloads of the in-memory entry cache.
   cacheReloadInterval: 5s
+  eventsBasedCache: false
+  pruneEventsOlderThan: 12h
   ## @param experimental.featureFlags [array] List of developer feature flags
   featureFlags: []
 

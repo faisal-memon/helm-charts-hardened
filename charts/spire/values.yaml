@@ -117,6 +117,10 @@ spire-server:
     repository: "spire-server"
     tag: "latest-local"
 
+  experimental:
+    enabled: true
+    eventsBasedCache: true
+
   dataStore:
     sql:
       # -- Other supported databases are "postgres" and "mysql"
