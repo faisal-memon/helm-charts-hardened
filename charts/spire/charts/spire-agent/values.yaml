@@ -140,21 +140,6 @@ readinessProbe:
   initialDelaySeconds: 10
   periodSeconds: 30
 
-waitForIt:
-  ## @param waitForIt.image.registry The OCI registry to pull the image from
-  ## @param waitForIt.image.repository The repository within the registry
-  ## @param waitForIt.image.pullPolicy The image pull policy
-  ## @param waitForIt.image.tag Overrides the image tag whose default is the chart appVersion
-  ##
-  image:
-    registry: cgr.dev
-    repository: chainguard/wait-for-it
-    pullPolicy: IfNotPresent
-    tag: latest@sha256:caead414307e81dbdd86d30662fdfe1b999dd4ce8a10fa667dab3438d0eed193
-
-  ## @param waitForIt.resources [object] Resource requests and limits
-  resources: {}
-
 # When running as non root, needed to ensure the socket path has the correct permissions.
 # Set runAsUser to a non-zero value in podSecurityContext to run as non-root user.
 fsGroupFix:
@@ -167,7 +152,7 @@ fsGroupFix:
     registry: cgr.dev
     repository: chainguard/bash
     pullPolicy: Always
-    tag: latest@sha256:81f0b434b297453ff101de0b5f4f5cd8d4af1c015a1d34162e9ae9a4a9f38669
+    tag: latest@sha256:245a25e5908f7cd5bd009b373b7ff3f1b36848eb4b60495a085053deae2d0ad6
 
   ## @param fsGroupFix.resources Specify resource needs as per https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
   resources: {}
@@ -275,7 +260,7 @@ socketAlternate:
     registry: cgr.dev
     repository: chainguard/bash
     pullPolicy: Always
-    tag: latest@sha256:81f0b434b297453ff101de0b5f4f5cd8d4af1c015a1d34162e9ae9a4a9f38669
+    tag: latest@sha256:245a25e5908f7cd5bd009b373b7ff3f1b36848eb4b60495a085053deae2d0ad6
 
   ## @param socketAlternate.resources Specify resource needs as per https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
   resources: {}
@@ -327,6 +312,37 @@ experimental:
   syncInterval: 5s
   ## @param experimental.featureFlags [array] List of developer feature flags
   featureFlags: []
+
+## @param agents Configure multiple agent DaemonSets. Useful when you have different node types and nodeAttestors
+agents: {}
+#  default:
+#   nodeSelector:
+#     tpm: without
+#  tpm:
+#    nodeSelector:
+#      tpm: with
+#    nodeAttestor:
+#      k8sPsat:
+#        enabled: false
+#      tpmDirect:
+#        enabled: true
+
+installAndUpgradeHook:
+  ## @param installAndUpgradeHook.enabled Enable Helm hook to autofix common install/upgrade issues (should be disabled when using `helm template`)
+  enabled: true
+
+tools:
+  kubectl:
+    ## @param tools.kubectl.image.registry The OCI registry to pull the image from
+    ## @param tools.kubectl.image.repository The repository within the registry
+    ## @param tools.kubectl.image.pullPolicy The image pull policy
+    ## @param tools.kubectl.image.tag Overrides the image tag whose default is the chart appVersion
+    ##
+    image:
+      registry: docker.io
+      repository: rancher/kubectl
+      pullPolicy: IfNotPresent
+      tag: ""
 
 sockets:
   ## @param sockets.hostBasePath Path on which the agent socket is made available when admin.mountOnHost is true
