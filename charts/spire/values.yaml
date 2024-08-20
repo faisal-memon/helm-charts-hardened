@@ -120,6 +120,7 @@ spire-server:
   experimental:
     enabled: true
     eventsBasedCache: true
+    pruneEventsOlderThan: 3m
 
   dataStore:
     sql:
