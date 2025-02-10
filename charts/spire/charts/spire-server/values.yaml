@@ -20,6 +20,12 @@ image:
   pullPolicy: IfNotPresent
   tag: ""
 
+## @param kind Define SPIRE server deployment type. Can be statefulset/deployment. Defaults to statefulset if not set. This feature is experimental.
+kind: statefulset
+
+## @param externalServer Deploy only the bundle ConfigMap, RBAC rules, and identity documents but not the server. Use in a nested setup where the server is external.
+externalServer: false
+
 ## @param imagePullSecrets [array] Pull secrets for images
 imagePullSecrets: []
 
@@ -72,7 +78,7 @@ priorityClassName: ""
 ##
 service:
   type: ClusterIP
-  port: 8081
+  port: 443
   annotations: {}
 
 configMap:
@@ -95,7 +101,7 @@ resources: {}
 ## @param autoscaling.enabled Flag to enable autoscaling
 ## @param autoscaling.minReplicas Minimum replicas for autoscaling
 ## @param autoscaling.maxReplicas Maximum replicas for autoscaling
-## @param autoscaling.targetCPUUtilizationPercentage Target CPU utlization that triggers autoscaling
+## @param autoscaling.targetCPUUtilizationPercentage Target CPU utilization that triggers autoscaling
 ##
 autoscaling:
   enabled: false
@@ -135,10 +141,10 @@ readinessProbe:
   periodSeconds: 5
 
 ## @param persistence.type What type of volume to use for persistence. Valid options pvc (recommended), hostPath, emptyDir (testing only)
-## @param persistence.size What type of volume to use for persistence. Valid options pvc (recommended), hostPath, emptyDir (testing only)
-## @param persistence.accessMode What type of volume to use for persistence. Valid options pvc (recommended), hostPath, emptyDir (testing only)
-## @param persistence.storageClass What type of volume to use for persistence. Valid options pvc (recommended), hostPath, emptyDir (testing only)
-## @param persistence.hostPath Which path to use on the host when type = hostPath
+## @param persistence.size What size volume to use for persistence
+## @param persistence.accessMode What access mode to use for persistence. Valid options are ReadWriteOnce (recommended), ReadWriteOncePod, ReadWriteMany (not recommended)
+## @param persistence.storageClass What storage class to use for persistence
+## @param persistence.hostPath Which path to use on the host when persistence.type = hostPath
 ##
 persistence:
   type: pvc
@@ -149,23 +155,27 @@ persistence:
 
 dataStore:
   sql:
-    ## @param dataStore.sql.databaseType Other supported databases are "postgres" and "mysql"
+    ## @param dataStore.sql.databaseType Other supported databases are ["postgres", "mysql", "aws_postgresql", "aws_mysql"]. Note: aws type databases are still experimental
     databaseType: sqlite3
-    ## @param dataStore.sql.databaseName Only used by "postgres" or "mysql"
+    ## @param dataStore.sql.databaseName Only used when type != "sqlite3"
     databaseName: spire
-    ## @param dataStore.sql.host Only used by "postgres" or "mysql"
+    ## @param dataStore.sql.host Only used when type != "sqlite3"
     host: ""
     ## @param dataStore.sql.port If 0 (default), it will auto set to 5432 for postgres and 3306 for mysql. Only used by those databases.
     port: 0
-    ## @param dataStore.sql.username Only used by "postgres" or "mysql"
+    ## @param dataStore.sql.username Only used when type != "sqlite3"
     username: spire
-    ## @param dataStore.sql.password Only used by "postgres" or "mysql"
+    ## @param dataStore.sql.password Only used when type != "sqlite3"
     password: ""
-    ## @param dataStore.sql.options [array] Only used by "postgres" or "mysql"
+    ## @param dataStore.sql.options [array] Only used when type != "sqlite3"
     options: []
 
-    ## @param dataStore.sql.plugin_data [object] Settings from https://github.com/spiffe/spire/blob/main/doc/plugin_server_datastore_sql.md go in this section
-    plugin_data: {}
+    ## @param dataStore.sql.rootCAPath Path to Root CA bundle (MySQL only)
+    rootCAPath: ""
+    ## @param dataStore.sql.clientCertPath Path to client certificate (MySQL only)
+    clientCertPath: ""
+    ## @param dataStore.sql.clientKeyPath Path to private key for client certificate (MySQL only)
+    clientKeyPath: ""
 
     ## When an external source creates the secret. The secret should reside in the same namespace as the spire server
     externalSecret:
@@ -175,6 +185,40 @@ dataStore:
       name: ""
       ## @param dataStore.sql.externalSecret.key The key of the secret object whose value is the dataStore.sql password
       key: ""
+
+    ## @param dataStore.sql.maxOpenConns The maximum number of open db connections
+    maxOpenConns: 100
+    ## @param dataStore.sql.maxIdleConns The maximum number of idle connections in the pool
+    maxIdleConns: 2
+    ## @param dataStore.sql.connMaxLifetime The maximum amount of time a connection may be reused. If 0, time is unlimited
+    connMaxLifetime: 0
+    ## @param dataStore.sql.disableMigration True to disable auto-migration functionality
+    disableMigration: false
+
+    ## @param dataStore.sql.region Region to use when database type is either aws_mysql or aws_postgresql
+    region: ""
+
+    readOnly:
+      ## @param dataStore.sql.readOnly.enabled Set to true to configure a readOnly dartabase connection
+      enabled: false
+      ## @param dataStore.sql.readOnly.host Only used when type != "sqlite3"
+      host: ""
+      ## @param dataStore.sql.readOnly.port If 0 (default), it will auto set to 5432 for postgres and 3306 for mysql. Only used by those databases.
+      port: 0
+      ## @param dataStore.sql.readOnly.username Only used when type != "sqlite3"
+      username: spire
+      ## @param dataStore.sql.readOnly.password Only used when type != "sqlite3"
+      password: ""
+      ## @param dataStore.sql.readOnly.options [array] Only used when type != "sqlite3"
+      options: []
+      ## When an external source creates the secret. The secret should reside in the same namespace as the spire server
+      externalSecret:
+        ## @param dataStore.sql.readOnly.externalSecret.enabled Enable external secret for datastore creds
+        enabled: false
+        ## @param dataStore.sql.readOnly.externalSecret.name The name of the secret object
+        name: ""
+        ## @param dataStore.sql.readOnly.externalSecret.key The key of the secret object whose value is the dataStore.sql password
+        key: ""
 
 ## @param adminIDs SPIFFE IDs that, when present in a caller’s X509-SVID, grant that caller admin privileges.
 adminIDs: []
@@ -204,6 +248,12 @@ federation:
     port: 8443
     ## @param federation.bundleEndpoint.address Address for trust bundle federation
     address: "0.0.0.0"
+    ## @param federation.bundleEndpoint.refreshHint Hint used by federated servers on how often to refresh the bundle. CA TTL must be 3-5x the duration of this value to ensure public keys are loaded on federated servers prior to private key rotation on remote server.
+    refreshHint: "5m"
+    profile:
+      httpWeb:
+        ## @param federation.bundleEndpoint.profile.httpWeb.fileSyncInterval Interval on which to reload the certificate/key from disk
+        fileSyncInterval: 1h
 
   tls:
     spire:
@@ -265,27 +315,27 @@ federation:
     ## @param federation.ingress.tlsSecret Secret that has the certs. If blank will use default certs. Used with host var.
     tlsSecret: ""
 
-    ## @param federation.ingress.hosts [array] Host paths for ingress object. If emtpy, rules will be built based on the host var.
+    ## @param federation.ingress.hosts [array] Host paths for ingress object. If empty, rules will be built based on the host var.
     hosts: []
     #  - host: spire-server-federation.example.org
     #    paths:
     #      - path: /
     #        pathType: Prefix
 
-    ## @param federation.ingress.tls [array] Secrets containining TLS certs to enable https on ingress. If emtpy, rules will be built based on the host and tlsSecret vars.
+    ## @param federation.ingress.tls [array] Secrets containing TLS certs to enable https on ingress. If empty, rules will be built based on the host and tlsSecret vars.
     tls: []
     #  - hosts:
     #      - spire-server-federation.example.org
     #    If Profile Type == https_web:
     #    secretName: spire-server-federation-tls
 
-ca_subject:
-  ## @param ca_subject.country Country for Spire server CA
+caSubject:
+  ## @param caSubject.country Country for Spire server CA
   country: ARPA
-  ## @param ca_subject.organization Organization for Spire server CA
+  ## @param caSubject.organization Organization for Spire server CA
   organization: Example
-  ## @param ca_subject.common_name Common Name for Spire server CA
-  common_name: example.org
+  ## @param caSubject.commonName Common Name for Spire server CA
+  commonName: example.org
 
 credentialComposer:
   uniqueID:
@@ -304,6 +354,14 @@ keyManager:
     enabled: false
     ## @param keyManager.awsKMS.region Specify the region for AWS KMS
     region: ""
+    keyIdentifierFile:
+      ## @param keyManager.awsKMS.keyIdentifierFile.enabled Enable key identifier data to be stored in a file in persistent storage.
+      enabled: false
+    keyIdentifierValue:
+      ## @param keyManager.awsKMS.keyIdentifierValue.enabled Enable specifying a key identifier value for AWS KMS
+      enabled: false
+      ## @param keyManager.awsKMS.keyIdentifierValue.identifier Static identifier for the SPIRE server instance
+      identifier: ""
     ## @extra keyManager.awsKMS.keyPolicy Policy to use when creating keys. If no policy is specified, a default policy will be used.
     keyPolicy:
       ## @param keyManager.awsKMS.keyPolicy.policy [nullable] Key policy in JSON format.
@@ -355,16 +413,16 @@ upstreamAuthority:
     ## @param upstreamAuthority.certManager.rbac.create Flag to create RBAC roles
     rbac:
       create: true
-    ## @param upstreamAuthority.certManager.issuer_name Defaults to the release name, override if CA is provided outside of the chart
-    issuer_name: ""
-    ## @param upstreamAuthority.certManager.issuer_kind Defaults to "Issuer", override if CA is provided outside of the chart
-    issuer_kind: "Issuer"
-    ## @param upstreamAuthority.certManager.issuer_group Defaults to "cert-manager.io", override if CA is provided outside of the chart
-    issuer_group: "cert-manager.io"
+    ## @param upstreamAuthority.certManager.issuerName Defaults to the release name, override if CA is provided outside of the chart
+    issuerName: ""
+    ## @param upstreamAuthority.certManager.issuerKind Defaults to "Issuer", override if CA is provided outside of the chart
+    issuerKind: "Issuer"
+    ## @param upstreamAuthority.certManager.issuerGroup Defaults to "cert-manager.io", override if CA is provided outside of the chart
+    issuerGroup: "cert-manager.io"
     ## @param upstreamAuthority.certManager.namespace Specify to use a namespace other then the one the chart is installed into
     namespace: ""
-    ## @param upstreamAuthority.certManager.kube_config_file Path to kube_config_file on node to setup cert manager
-    kube_config_file: ""
+    ## @param upstreamAuthority.certManager.kubeConfigFile Path to kube config file on node to setup cert manager
+    kubeConfigFile: ""
 
     ca:
       ## @param upstreamAuthority.certManager.ca.create Creates a Cert-Manager CA
@@ -387,10 +445,12 @@ upstreamAuthority:
     upstreamDriver: ""
     ## @extra upstreamAuthority.spire.server Server details for the Spire instance use as upstream CA
     server:
+      ## @param upstreamAuthority.spire.server.nameOverride Override the name for upstream Spire server. Should only be changed when building your own nested chart to ensure names align.
+      nameOverride: ""
       ## @param upstreamAuthority.spire.server.address Address for upstream Spire server
       address: ""
       ## @param upstreamAuthority.spire.server.port Port for upstream Spire server
-      port: 8081
+      port: 443
   vault:
     ## @param upstreamAuthority.vault.enabled Enable Hashicorp Vault as upstream CA
     enabled: false
@@ -422,9 +482,26 @@ upstreamAuthority:
         expiry: 7200
 
 notifier:
-  k8sbundle:
-    ## @param notifier.k8sbundle.namespace Namespace to push the bundle into, if blank will default to SPIRE Server namespace
+  k8sBundle:
+    ## @param notifier.k8sBundle.enabled Enable local k8s bundle uploader
+    enabled: true
+    ## @param notifier.k8sBundle.namespace Namespace to push the bundle into, if blank will default to SPIRE Server namespace
     namespace: ""
+  externalK8sBundle:
+    ## @param notifier.externalK8sBundle.enabled Enable external k8s bundle uploader
+    enabled: true
+    defaults:
+      ## @param notifier.externalK8sBundle.defaults.namespace Namespace to push the bundle into on clusters
+      namespace: "spire-system"
+      ## @param notifier.externalK8sBundle.defaults.configMap ConfigMap name to push the bundle into on external clusters
+      configMap: "spire-bundle-upstream"
+      ## @param notifier.externalK8sBundle.defaults.configMapKey ConfigMap key to push the bundle into on external clusters
+      configMapKey: "bundle.crt"
+    ## @param notifier.externalK8sBundle.clusters [object] A dictionary of clusters to add with optional overrides. If empty, all clusters defined in kubeConfigs will be used.
+    clusters: {}
+    # clustera:
+    #   namespace: foo
+    # clusterb: {}
 
 controllerManager:
   ## @param controllerManager.enabled Flag to enable controller manager
@@ -434,6 +511,9 @@ controllerManager:
   className: ""
   ## @param controllerManager.watchClassless specify to process custom resources without class name specified. Useful to slowly migrate to class names from classless installs. Do not have two installs on the same k8s cluster both set to true.
   watchClassless: false
+
+  ## @param controllerManager.entryIDPrefixCleanup Sets which entry prefixes to remove for migrations. Consult the spiffe.io docs about this option before changing. Its unlikely you will need to ever change it.
+  entryIDPrefixCleanup: false
 
   ## @param controllerManager.parentIDTemplate The template that is used to register workloads.
   parentIDTemplate: "spiffe://{{ .TrustDomain }}/spire/agent/k8s_psat/{{ .ClusterName }}/{{ .NodeMeta.UID }}"
@@ -460,7 +540,7 @@ controllerManager:
     registry: ghcr.io
     repository: spiffe/spire-controller-manager
     pullPolicy: IfNotPresent
-    tag: "0.4.3"
+    tag: "0.6.0"
 
   ## @param controllerManager.resources [object] Resource requests and limits for controller manager
   resources: {}
@@ -502,7 +582,10 @@ controllerManager:
     - kube-system
     - kube-public
     - local-path-storage
-
+    # openshift creates many namespaces that should be typically ignored:
+    - openshift-.*
+    # ibmcloud specific namespaces:
+    - ibm-.*
   ## @param controllerManager.reconcile.clusterSPIFFEIDs Enable reconciliation of clusterSPIFFEIDs from K8s to the SPIRE server
   ## @param controllerManager.reconcile.clusterStaticEntries Enable reconciliation of clusterStaticEntries from K8s to the SPIRE server
   ## @param controllerManager.reconcile.clusterFederatedTrustDomains Enable reconciliation of clusterFederatedTrustDomains from K8s to the SPIRE server
@@ -522,7 +605,7 @@ controllerManager:
         podSelector: {}
           # matchLabels:
           #   spiffe.io/spiffe-id: "true"
-        ## @param controllerManager.identities.clusterSPIFFEIDs.default.namespaceSelector [object] Selector for namespacs to issue identity
+        ## @param controllerManager.identities.clusterSPIFFEIDs.default.namespaceSelector [object] Selector for namespaces to issue identity
         namespaceSelector: {}
           # matchLabels:
           #   spiffe.io/spiffe-id: "true"
@@ -545,6 +628,18 @@ controllerManager:
         downstream: false
         ## @param controllerManager.identities.clusterSPIFFEIDs.default.autoPopulateDNSNames Auto populate DNS names from services attached to pods
         autoPopulateDNSNames: false
+        ## @param controllerManager.identities.clusterSPIFFEIDs.default.fallback Apply this ID only if there are no other matching non fallback ClusterSPIFFEIDs
+        fallback: true
+        # Set what hint to use. If unset, it will be asigned the clusterSPIFFEID name. If set to "", it will be unset. Any other value will set the hint to exactly what is specified.
+        # hint: ""
+
+      child-servers:
+        ## @param controllerManager.identities.clusterSPIFFEIDs.child-servers.enabled Enable this identity for controller manager
+        enabled: false
+        ## @param controllerManager.identities.clusterSPIFFEIDs.child-servers.type The type of rule this is.
+        type: child-servers
+        ## @param controllerManager.identities.clusterSPIFFEIDs.child-servers.downstream Set if this spire instance is a root server and the workloads are downstream servers.
+        downstream: true
 
       oidc-discovery-provider:
         ## @param controllerManager.identities.clusterSPIFFEIDs.oidc-discovery-provider.enabled Enable this identity for controller manager
@@ -612,6 +707,57 @@ controllerManager:
   #    fieldSelectors:
   #       fName: f1
 
+externalControllerManagers:
+  ## @param externalControllerManagers.enabled Flag to enable external controller managers
+  enabled: false
+  defaults:
+    ## @param externalControllerManagers.defaults.reconcile.clusterSPIFFEIDs Enable reconciliation of clusterSPIFFEIDs from K8s to the SPIRE server
+    ## @param externalControllerManagers.defaults.reconcile.clusterStaticEntries Enable reconciliation of clusterStaticEntries from K8s to the SPIRE server
+    ## @param externalControllerManagers.defaults.reconcile.clusterFederatedTrustDomains Enable reconciliation of clusterFederatedTrustDomains from K8s to the SPIRE server
+    reconcile:
+      clusterSPIFFEIDs: true
+      clusterStaticEntries: false
+      clusterFederatedTrustDomains: false
+    ## @param externalControllerManagers.defaults.className specify to use an explicit class name. If empty, it will be automatically set to Release.Namespace-Release.Name to not conflict with other installs, enabling parallel installs.
+    className: ""
+    ## @param externalControllerManagers.defaults.watchClassless specify to process custom resources without class name specified. Useful to slowly migrate to class names from classless installs. Do not have two installs on the same k8s cluster both set to true.
+    watchClassless: false
+    ## @param externalControllerManagers.defaults.entryIDPrefixCleanup consult the spiffe.io docs about this option before changing. Its unlikely you will need to ever change it.
+    entryIDPrefixCleanup: false
+    ## @param externalControllerManagers.defaults.parentIDTemplate The template that is used to register workloads.
+    parentIDTemplate: "spiffe://{{ .TrustDomain }}/spire/agent/k8s_psat/{{ .ClusterName }}/{{ .NodeMeta.UID }}"
+    ## @param externalControllerManagers.defaults.expandEnv Set to true to enable environment variable substitution of config file options
+    expandEnv: false
+    ## @param externalControllerManagers.defaults.extraEnv [array] Extra environment variables to add to the controller manager
+    extraEnv: []
+    ## @param externalControllerManagers.defaults.resources [object] Resource requests and limits for controller manager
+    resources: {}
+    ## @param externalControllerManagers.defaults.securityContext [object] Security context
+    securityContext: {}
+    configMap:
+      ## @param externalControllerManagers.defaults.configMap.annotations [object] Annotations to add to the Controller Manager ConfigMap
+      annotations: {}
+    ## @param externalControllerManagers.defaults.ignoreNamespaces [array] These namespaces are ignored by controller manager
+    ignoreNamespaces:
+      - kube-system
+      - kube-public
+      - local-path-storage
+      # openshift creates many namespaces that should be typically ignored:
+      - openshift-.*
+      # ibmcloud specific namespaces:
+      - ibm-.*
+    ## @param externalControllerManagers.defaults.cacheNamespaces [object] If specified restricts the manager's cache to watch objects in the desired namespaces. Defaults to all namespaces.
+    cacheNamespaces: {}
+
+  ## @param externalControllerManagers.clusters [object] A dictionary of clusters to add with optional overrides. If empty, all clusters defined in kubeConfigs will be used.
+  clusters: {}
+  # clustera:
+      # Should match the name of the config in the kubeConfigs section
+  #   kubeConfigName: foo
+  #   reconcile:
+  #     clusterStaticEntries: true
+  # other: {}
+
 tools:
   kubectl:
     ## @param tools.kubectl.image.registry The OCI registry to pull the image from
@@ -657,14 +803,14 @@ ingress:
   ## @param ingress.tlsSecret Secret that has the certs. If blank will use default certs. Used with host var.
   tlsSecret: ""
 
-  ## @param ingress.hosts [array] Host paths for ingress object. If emtpy, rules will be built based on the host var.
+  ## @param ingress.hosts [array] Host paths for ingress object. If empty, rules will be built based on the host var.
   hosts: []
   #   - host: spire-server.example.org
   #     paths:
   #       - path: /
   #         pathType: Prefix
 
-  ## @param ingress.tls [array] Secrets containining TLS certs to enable https on ingress. If emtpy, rules will be built based on the host and tlsSecret vars.
+  ## @param ingress.tls [array] Secrets containing TLS certs to enable https on ingress. If empty, rules will be built based on the host and tlsSecret vars.
   tls: []
   #  - secretName: spire-server-tls
   #    hosts:
@@ -695,14 +841,49 @@ defaultX509SvidTTL: 4h
 defaultJwtSvidTTL: 1h
 
 nodeAttestor:
-  k8sPsat:
-    ## @param nodeAttestor.k8sPsat.enabled Enable Psat k8s nodeattestor
+  k8sPSAT:
+    ## @param nodeAttestor.k8sPSAT.enabled Enable PSAT k8s nodeattestor
     enabled: true
-    ## @param nodeAttestor.k8sPsat.serviceAccountAllowList [array] Allowed service accounts for Psat nodeattestor
+    ## @param nodeAttestor.k8sPSAT.serviceAccountAllowList [array] Allowed service accounts for PSAT nodeattestor. If namespace isn't specified, release namespace will be used.
     serviceAccountAllowList: []
+    ## @param nodeAttestor.k8sPSAT.audience [array] Audience for token validation. If set to [] (empty array), Kubernetes API server audience is used
+    audience: ["spire-server"]
+    ## @param nodeAttestor.k8sPSAT.allowedNodeLabelKeys [array] Node label keys considered for selectors
+    allowedNodeLabelKeys: []
+    ## @param nodeAttestor.k8sPSAT.allowedPodLabelKeys [array] Pod label keys considered for selectors
+    allowedPodLabelKeys: []
+  externalK8sPSAT:
+    ## @param nodeAttestor.externalK8sPSAT.enabled Enable PSAT k8s nodeattestor for external Kubernetes clusters
+    enabled: true
+    defaults:
+      ## @param nodeAttestor.externalK8sPSAT.defaults.serviceAccountAllowList [array] Allowed service accounts for PSAT node attestor
+      serviceAccountAllowList: ["spire-system:spire-agent-upstream"]
+      ## @param nodeAttestor.externalK8sPSAT.defaults.audience [array] Audience for token validation. If it is set to an empty array ([]), Kubernetes API server audience is used
+      audience: ["spire-server"]
+      ## @param nodeAttestor.externalK8sPSAT.defaults.allowedNodeLabelKeys [array] Node label keys considered for selectors
+      allowedNodeLabelKeys: []
+      ## @param nodeAttestor.externalK8sPSAT.defaults.allowedPodLabelKeys [array] Pod label keys considered for selectors
+      allowedPodLabelKeys: []
+    ## @param nodeAttestor.externalK8sPSAT.clusters [object] A dictionary of clusters to add with optional overrides. If empty, all clusters defined in kubeConfigs will be used.
+    clusters: {}
+    # clustera:
+    #   kubeConfigName: foo
+    #   serviceAccountAllowList: ["other-ns:other-agent"]
+    # clusterb: {}
   joinToken:
     ## @param nodeAttestor.joinToken.enabled Enable the join_token nodeattestor
     enabled: false
+  httpChallenge:
+    ## @param nodeAttestor.httpChallenge.enabled Enable the http_challenge nodeattesto
+    enabled: false
+    ## @param nodeAttestor.httpChallenge.allowedDNSPatterns A list of regular expressions to match to the hostname being attested. If none match, attestation will fail. If a blank list, all hostnames are allowed.
+    allowedDNSPatterns: []
+    ## @param nodeAttestor.httpChallenge.requiredPort Set to a port number to require clients to listen only on that port. If 0, all port numbers are allowed
+    requiredPort: 0
+    ## @param nodeAttestor.httpChallenge.allowNonRootPorts Allow using ports >= 1024 from clients for attestation
+    allowNonRootPorts: true
+    ## @param nodeAttestor.httpChallenge.tofu Trust on first use of the successful challenge. Can only be disabled if allowNonRootPorts=false or requiredPort < 1024
+    tofu: true
   tpmDirect:
     ## @param nodeAttestor.tpmDirect.enabled Enable the direct TPM node attestor, a 3rd party plugin by Boxboat. This plugin is experimental.
     enabled: false
@@ -725,6 +906,36 @@ nodeAttestor:
     ## @param nodeAttestor.tpmDirect.hashes A list of TPM hashes that are allowed to connect.
     hashes: []
 
+# The secrets needed for this plugin are configured in the secrets: section
+bundlePublisher:
+  awsRolesAnywhereTrustAnchor:
+    ## @param bundlePublisher.awsRolesAnywhereTrustAnchor.enabled Enable the AWS S3 bundle publisher
+    enabled: false
+    ## @param bundlePublisher.awsRolesAnywhereTrustAnchor.region AWS region to store the trust bundle
+    region: ""
+    ## @param bundlePublisher.awsRolesAnywhereTrustAnchor.trustAnchorID AWS trust anchor ID to publish to
+    trustAnchorID: ""
+  awsS3:
+    ## @param bundlePublisher.awsS3.enabled Enable the AWS S3 bundle publisher
+    enabled: false
+    ## @param bundlePublisher.awsS3.region AWS region to store the trust bundle
+    region: ""
+    ## @param bundlePublisher.awsS3.bucket AWS S3 bucket name to which the trust bundle is uploaded
+    bucket: ""
+    ## @param bundlePublisher.awsS3.objectKey AWS S3 object key inside the bucket
+    objectKey: ""
+    ## @param bundlePublisher.awsS3.format Format in which the trust bundle is stored. Valid options [spiffe, jwks, pem]
+    format: ""
+  gcpCloudStorage:
+    ## @param bundlePublisher.gcpCloudStorage.enabled Enable the Google Cloud Storage bundle publisher
+    enabled: false
+    ## @param bundlePublisher.gcpCloudStorage.bucketName Google Cloud Storage bucket name to which the trust bundle is uploaded
+    bucketName: ""
+    ## @param bundlePublisher.gcpCloudStorage.objectName Google Cloud Storage object name
+    objectName: ""
+    ## @param bundlePublisher.gcpCloudStorage.format Format in which the trust bundle is stored. Valid options [spiffe, jwks, pem]
+    format: ""
+
 ## @section Tornjak
 tornjak:
   ## @param tornjak.enabled Deploys Tornjak API (backend) (Not for production)
@@ -740,7 +951,7 @@ tornjak:
     repository: spiffe/tornjak-backend
     pullPolicy: IfNotPresent
     tag: ""
-    defaultTag: "v1.4.2"
+    defaultTag: "v1.6.0"
 
   service:
     ## @param tornjak.service.type Type of service resource
@@ -769,7 +980,7 @@ tornjak:
     ## @param tornjak.ingress.tlsSecret Secret that has the certs. If blank will use default certs. Used with host var.
     tlsSecret: ""
 
-    ## @param tornjak.ingress.hosts [array] Host paths for ingress object. If emtpy, rules will be built based on the host var.
+    ## @param tornjak.ingress.hosts [array] Host paths for ingress object. If empty, rules will be built based on the host var.
     hosts: []
     #   - host: tornjak-backend.example.org
     #     paths:
@@ -803,6 +1014,12 @@ tornjak:
       driver: "sqlite3"
       ## @param tornjak.config.dataStore.file File path for sqlite3 file
       file: "/run/spire/data/tornjak.sqlite3"
+    ## @extra tornjak.config.userManagement [object] UserManagement config
+    userManagement:
+      ## @param tornjak.config.userManagement.issuer UserManagement issuer URL
+      issuer: ""
+      ## @param tornjak.config.userManagement.audience UserManagement audience check
+      audience: ""
 
     # Tornjak supports 3 connection types: `http`, `tls`, and `mtls`.
     # The connections are determined based on provided configuration
@@ -834,6 +1051,16 @@ tornjak:
   ## @param tornjak.securityContext [object] Security Context to use
   securityContext: {}
 
+secrets:
+  aws:
+    ## @param secrets.aws.accessKeyID AWS Access Key ID
+    accessKeyID: ""
+    ## @param secrets.aws.secretAccessKey AWS Secret Access Key
+    secretAccessKey: ""
+  gcp:
+    ## @param secrets.gcp.applicationCredentials Google Application Credentials
+    applicationCredentials: ""
+
 # NOTE: This is unsupported and only to configure currently supported spire built in plugins but plugins unsupported by the chart.
 # Upgrades wont be tested for anything under this config. If you need this, please let the chart developers know your needs so we
 # can prioritize proper support.
@@ -860,11 +1087,31 @@ customPlugins:
   upstreamAuthority: {}
   notifier: {}
 
+# When upgrading from a previous version, sometimes we need to change the user and requires updating permissions.
+chown:
+  ## @param chown.image.registry The OCI registry to pull the image from
+  ## @param chown.image.repository The repository within the registry
+  ## @param chown.image.pullPolicy The image pull policy
+  ## @param chown.image.tag Overrides the image tag whose default is the chart appVersion
+  ##
+  image:
+    registry: cgr.dev
+    repository: chainguard/bash
+    pullPolicy: Always
+    tag: latest@sha256:f7d0921b1b57304b847eef057cf171313ab3131cecc9778ca58dee866894ae2d
+
+  ## @param chown.resources Specify resource needs as per https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+  resources: {}
+
 experimental:
   ## @param experimental.enabled Allow configuration of experimental features
   enabled: false
   ## @param experimental.cacheReloadInterval The amount of time between two reloads of the in-memory entry cache.
   cacheReloadInterval: 5s
+  ## @param experimental.eventsBasedCache Use events to update the cache with what's changed since the last update.
+  eventsBasedCache: false
+  ## @param experimental.pruneEventsOlderThan How old an event can be before being deleted. Used with events based cache.
+  pruneEventsOlderThan: 12h
   ## @param experimental.featureFlags [array] List of developer feature flags
   featureFlags: []
 
@@ -886,4 +1133,13 @@ tests:
       registry: cgr.dev
       repository: chainguard/bash
       pullPolicy: IfNotPresent
-      tag: latest@sha256:81f0b434b297453ff101de0b5f4f5cd8d4af1c015a1d34162e9ae9a4a9f38669
+      tag: latest@sha256:f7d0921b1b57304b847eef057cf171313ab3131cecc9778ca58dee866894ae2d
+
+## @param kubeConfigs [object] Manage additional kubeconfig files to talk to external Kubernetes clusters
+kubeConfigs: {}
+# clustera:
+#   kubeConfig: |
+#     xxxxx
+#     xxxxx
+# clusterb:
+#   kubeConfigBase64: eXl5Cnl5eQo=

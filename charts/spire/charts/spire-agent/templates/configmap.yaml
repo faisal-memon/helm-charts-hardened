@@ -1,3 +1,4 @@
+{{- define "spire-agent.check-config-values" -}}
 {{- include "spire-lib.check-strict-mode" (list . "clusterName must be set" (eq (include "spire-lib.cluster-name" .) "example-cluster"))}}
 {{- include "spire-lib.check-strict-mode" (list . "trustDomain must be set" (eq (include "spire-lib.trust-domain" .) "example.org"))}}
 {{- range $type, $tvals := .Values.customPlugins }}
@@ -21,26 +22,27 @@
 {{- if hasPrefix (.Values.socketPath | dir | clean) (.Values.sockets.hostBasePath | clean) }}
 {{- fail "The sockets.hostBasePath can not be located under the socketPath direcotry" }}
 {{- end }}
+{{- end }}
 {{- define "spire-agent.yaml-config" -}}
 agent:
-  {{- if .Values.disableReattestToRenew }}
-  disable_reattest_to_renew: true
-  {{- end }}
   {{- if .Values.sockets.admin.enabled }}
-  admin_socket_dir: /tmp/spire-agent/private/admin.sock
+  admin_socket_path: /tmp/spire-agent/private/admin.sock
   {{- end }}
   {{- with .Values.authorizedDelegates }}
   authorized_delegates:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  data_dir: "/run/spire"
+  data_dir: "/var/lib/spire"
   log_level: {{ .Values.logLevel | quote }}
+  retry_bootstrap: true
   server_address: {{ include "spire-agent.server-address" . | trim | quote }}
   server_port: {{ .Values.server.port | quote }}
   socket_path: /tmp/spire-agent/public/{{ include "spire-agent.socket-path" . | base }}
   {{- if ne (len .Values.trustBundleURL) 0 }}
   trust_bundle_url: {{ .Values.trustBundleURL | quote }}
   trust_bundle_format: {{ .Values.trustBundleFormat | quote }}
+  {{- else if ne (len .Values.trustBundleHostPath) 0 }}
+  trust_bundle_path: {{ .Values.trustBundleHostPath | quote }}
   {{- else }}
   trust_bundle_path: "/run/spire/bundle/bundle.crt"
   {{- end }}
@@ -50,10 +52,10 @@ agent:
   {{- end }}
   {{- if .Values.sds.enabled }}
   sds:
-    default_svid_name: {{ .Values.sds.defaultSvidName | quote }}
+    default_svid_name: {{ .Values.sds.defaultSVIDName | quote }}
     default_bundle_name: {{ .Values.sds.defaultBundleName | quote }}
     default_all_bundles_name: {{ .Values.sds.defaultAllBundlesName | quote }}
-    disable_spiffe_cert_validation: {{ .Values.sds.disableSpiffeCertValidation }}
+    disable_spiffe_cert_validation: {{ eq .Values.sds.disableSPIFFECertValidation true }}
   {{- end }}
 
   {{- with .Values.experimental }}
@@ -73,17 +75,31 @@ agent:
 {{- $keyManagerUsed := add (len .Values.customPlugins.keyManager) (len .Values.unsupportedBuiltInPlugins.keyManager) }}
 plugins:
   NodeAttestor:
-    {{- if .Values.nodeAttestor.k8sPsat.enabled }}
+    {{- if .Values.nodeAttestor.k8sPSAT.enabled }}
     k8s_psat:
       plugin_data:
         cluster: {{ include "spire-lib.cluster-name" . | quote }}
     {{- $nodeAttestorUsed = add1 $nodeAttestorUsed }}
     {{- end }}
+    {{- with .Values.nodeAttestor.httpChallenge }}
+    {{- if eq (.enabled | toString) "true" }}
+    http_challenge:
+      plugin_data:
+        agentname: {{ .agentname | quote }}
+        {{- if ne (int .port) 0 }}
+        port: {{ .port }}
+        {{- end }}
+        {{- if ne (int .advertisedPort) 0 }}
+        advertisedPort: {{ .advertisedPort }}
+        {{- end }}
+    {{- $nodeAttestorUsed = add1 $nodeAttestorUsed }}
+    {{- end }}
+    {{- end }}
     {{- with .Values.nodeAttestor.tpmDirect }}
     {{- if eq (.enabled | toString) "true" }}
     tpm:
       plugin_cmd: "/tpm/tpm_attestor_agent"
-      plugin_checksum: {{ .plugin.checksum }}
+      plugin_checksum: {{ .plugin.checksum | quote }}
       plugin_data: {}
     {{- $nodeAttestorUsed = add1 $nodeAttestorUsed }}
     {{- end }}
@@ -106,11 +122,18 @@ plugins:
   {{- if .Values.workloadAttestors.k8s.enabled }}
     k8s:
       plugin_data:
-        # Defaults to the secure kubelet port by default.
-        # Minikube does not have a cert in the cluster CA bundle that
-        # can authenticate the kubelet cert, so skip validation.
-        skip_kubelet_verification: {{ .Values.workloadAttestors.k8s.skipKubeletVerification }}
-        disable_container_selectors: {{ .Values.workloadAttestors.k8s.disableContainerSelectors }}
+        {{- if or (eq .Values.workloadAttestors.k8s.verification.type "hostCert") (eq .Values.workloadAttestors.k8s.verification.type "auto") }}
+        kubelet_ca_path: /hostCert/kubelet.crt
+        {{- else if eq .Values.workloadAttestors.k8s.verification.type "apiServerCA" }}
+        kubelet_ca_path: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        {{- end }}
+        skip_kubelet_verification: {{ eq .Values.workloadAttestors.k8s.verification.type "skip" }}
+        disable_container_selectors: {{ eq .Values.workloadAttestors.k8s.disableContainerSelectors true}}
+        use_new_container_locator: {{ eq .Values.workloadAttestors.k8s.useNewContainerLocator true }}
+        verbose_container_locator_logs: {{ eq .Values.workloadAttestors.k8s.verboseContainerLocatorLogs true }}
+        {{- if eq (include "spire-agent.connect-by-hostname" .) "true" }}
+        node_name_env: "MY_NODE_NAME"
+        {{- end }}
   {{- end }}
 
   {{- if .Values.workloadAttestors.unix.enabled }}
@@ -132,11 +155,23 @@ telemetry:
         port: {{ .Values.telemetry.prometheus.port }}
 {{- end }}
 {{- end }}
+{{- $root := . }}
+{{- range $name := (concat (list "default") (keys .Values.agents)) | uniq }}
+{{- with (dict "Release" $root.Release "Chart" $root.Chart "Values" (deepCopy $root.Values)) }}
+{{- $nameSuffix := "" }}
+{{- if ne $name "default" }}
+{{-   $nameSuffix = printf "-%s" $name }}
+{{- end }}
+{{- if hasKey $root.Values.agents $name }}
+{{-   $_ := set . "Values" (mergeOverwrite .Values (index $root.Values.agents $name)) }}
+{{- end }}
+{{- include "spire-agent.check-config-values" . }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "spire-agent.fullname" . }}
-  namespace: {{ include "spire-agent.namespace" . }}
+  name: {{ printf "%s%s" (include "spire-agent.fullname" .) $nameSuffix | quote }}
+  namespace: {{ include "spire-agent.namespace" . | quote }}
   {{- with .Values.configMap.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -144,3 +179,5 @@ metadata:
 data:
   agent.conf: |
     {{- include "spire-lib.reformat-and-yaml2json" (dict "config" (include "spire-agent.yaml-config" .) "root" .) | nindent 4 }}
+{{- end }}
+{{- end }}
